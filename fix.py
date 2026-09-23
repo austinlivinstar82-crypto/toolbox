@@ -5,6 +5,7 @@ os.makedirs('templates', exist_ok=True)
 app_py = '''from flask import Flask, render_template, request
 from datetime import datetime
 import random
+import traceback
 
 app = Flask(__name__)
 
@@ -14,43 +15,85 @@ def home():
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    data = {
-        'company': request.form.get('company', 'Your Company'),
-        'client': request.form.get('client', 'Client Name'),
-        'invoice_num': request.form.get('invoice_num', f'INV-{random.randint(1000,9999)}'),
-        'date': request.form.get('date', datetime.now().strftime('%Y-%m-%d')),
-        'due_date': request.form.get('due_date', ''),
-        'items': [],
-        'tax_rate': float(request.form.get('tax_rate', 0)),
-        'notes': request.form.get('notes', ''),
-    }
-    
-    descriptions = request.form.getlist('desc[]')
-    quantities = request.form.getlist('qty[]')
-    rates = request.form.getlist('rate[]')
-    
-    subtotal = 0
-    for i in range(len(descriptions)):
-        if descriptions[i]:
-            qty = float(quantities[i]) if i < len(quantities) else 1
-            rate = float(rates[i]) if i < len(rates) else 0
+    try:
+        # Safely get all form data
+        company = request.form.get('company', '').strip() or 'Your Company'
+        client = request.form.get('client', '').strip() or 'Client Name'
+        invoice_num = request.form.get('invoice_num', '').strip() or f'INV-{random.randint(1000,9999)}'
+        date_str = request.form.get('date', '').strip() or datetime.now().strftime('%Y-%m-%d')
+        due_date = request.form.get('due_date', '').strip()
+        notes = request.form.get('notes', '').strip()
+
+        # Tax rate
+        tax_rate_raw = request.form.get('tax_rate', '0').strip()
+        try:
+            tax_rate = float(tax_rate_raw) if tax_rate_raw else 0.0
+        except:
+            tax_rate = 0.0
+
+        # Build items list
+        items = []
+        subtotal = 0.0
+
+        descs = request.form.getlist('desc[]')
+        qtys = request.form.getlist('qty[]')
+        rates = request.form.getlist('rate[]')
+
+        for i in range(len(descs)):
+            desc = descs[i].strip() if i < len(descs) else ''
+            if not desc:
+                continue
+
+            qty_raw = qtys[i].strip() if i < len(qtys) else '1'
+            rate_raw = rates[i].strip() if i < len(rates) else '0'
+
+            try:
+                qty = float(qty_raw) if qty_raw else 1.0
+            except:
+                qty = 1.0
+
+            try:
+                rate = float(rate_raw) if rate_raw else 0.0
+            except:
+                rate = 0.0
+
             total = qty * rate
             subtotal += total
-            data['items'].append({
-                'desc': descriptions[i],
+
+            items.append({
+                'desc': desc,
                 'qty': qty,
                 'rate': rate,
                 'total': total
             })
-    
-    tax = subtotal * (data['tax_rate'] / 100)
-    grand_total = subtotal + tax
-    
-    data['subtotal'] = subtotal
-    data['tax'] = tax
-    data['grand_total'] = grand_total
-    
-    return render_template('invoice.html', data=data)
+
+        # If no valid items, add a placeholder so template doesn't break
+        if not items:
+            items.append({'desc': 'Service', 'qty': 1, 'rate': 0, 'total': 0})
+
+        tax = subtotal * (tax_rate / 100.0)
+        grand_total = subtotal + tax
+
+        data = {
+            'company': company,
+            'client': client,
+            'invoice_num': invoice_num,
+            'date': date_str,
+            'due_date': due_date,
+            'items': items,
+            'tax_rate': tax_rate,
+            'tax': tax,
+            'subtotal': subtotal,
+            'grand_total': grand_total,
+            'notes': notes
+        }
+
+        return render_template('invoice.html', data=data)
+
+    except Exception as e:
+        # Show the actual error on screen so we can debug
+        error_details = traceback.format_exc()
+        return f"<h1>Debug Error</h1><pre>{error_details}</pre><br><a href='/'>Go Back</a>", 500
 
 if __name__ == '__main__':
     app.run(debug=True)
@@ -73,7 +116,7 @@ index_html = '''<!DOCTYPE html>
     <div class="max-w-3xl mx-auto bg-white rounded-xl shadow-lg p-6 md:p-8 mt-8">
         <h1 class="text-3xl font-bold text-gray-800 mb-2">Free Invoice Generator</h1>
         <p class="text-gray-600 mb-6">Create professional invoices in seconds. No signup. No watermark.</p>
-        
+
         <form action="/generate" method="POST" class="space-y-4">
             <div class="grid md:grid-cols-2 gap-4">
                 <div>
@@ -85,7 +128,7 @@ index_html = '''<!DOCTYPE html>
                     <input type="text" name="client" placeholder="Client Business Name" class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500" required>
                 </div>
             </div>
-            
+
             <div class="grid md:grid-cols-3 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Invoice #</label>
@@ -100,7 +143,7 @@ index_html = '''<!DOCTYPE html>
                     <input type="date" name="due_date" class="w-full px-4 py-2 border rounded-lg">
                 </div>
             </div>
-            
+
             <div class="border-t pt-4">
                 <h3 class="font-semibold text-gray-800 mb-3">Items</h3>
                 <div id="items" class="space-y-2">
@@ -120,7 +163,7 @@ index_html = '''<!DOCTYPE html>
                     </div>
                 </div>
             </div>
-            
+
             <div class="grid md:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Tax Rate (%)</label>
@@ -131,7 +174,7 @@ index_html = '''<!DOCTYPE html>
                     <textarea name="notes" rows="2" placeholder="Payment terms, thank you note..." class="w-full px-4 py-2 border rounded-lg"></textarea>
                 </div>
             </div>
-            
+
             <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition">
                 Generate Invoice
             </button>
@@ -174,12 +217,12 @@ invoice_html = '''<!DOCTYPE html>
 <body class="bg-gray-100 min-h-screen">
     <div class="max-w-4xl mx-auto p-4 md:p-8">
         <div class="no-print flex justify-between items-center mb-6">
-            <a href="/" class="text-blue-600 font-semibold">← Create New Invoice</a>
+            <a href="/" class="text-blue-600 font-semibold">&larr; Create New Invoice</a>
             <button onclick="window.print()" class="bg-green-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-green-700">
                 Print / Save as PDF
             </button>
         </div>
-        
+
         <div class="invoice-box bg-white p-8 md:p-12 shadow-lg rounded-lg">
             <div class="flex justify-between items-start mb-8">
                 <div>
@@ -195,12 +238,12 @@ invoice_html = '''<!DOCTYPE html>
                     {% endif %}
                 </div>
             </div>
-            
+
             <div class="mb-8">
                 <p class="text-sm text-gray-500 uppercase tracking-wide font-semibold">Bill To</p>
                 <p class="text-lg font-medium text-gray-800">{{ data.client }}</p>
             </div>
-            
+
             <table class="w-full mb-8">
                 <thead>
                     <tr class="border-b-2 border-gray-800">
@@ -221,7 +264,7 @@ invoice_html = '''<!DOCTYPE html>
                     {% endfor %}
                 </tbody>
             </table>
-            
+
             <div class="flex justify-end">
                 <div class="w-64 space-y-2">
                     <div class="flex justify-between text-gray-600">
@@ -240,7 +283,7 @@ invoice_html = '''<!DOCTYPE html>
                     </div>
                 </div>
             </div>
-            
+
             {% if data.notes %}
             <div class="mt-8 pt-4 border-t text-gray-600 text-sm">
                 <p class="font-semibold mb-1">Notes:</p>
